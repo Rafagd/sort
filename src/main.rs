@@ -3,33 +3,62 @@ extern crate rand;
 
 use ggez::{ conf, Context, event, GameResult, graphics };
 use rand::{ Rng, thread_rng };
-use std::sync::{ Arc, Mutex, MutexGuard, PoisonError };
-use std::thread;
+use std::cmp;
 use std::time::Duration;
 
-struct List<T>(Arc<Mutex<Vec<T>>>);
-
-impl<T> List<T>
+struct Bubble
 {
-    fn new(list: Vec<T>) -> List<T>
+    pub list: Vec<(graphics::Color, u32)>,
+
+    cursor:    Option<usize>,
+    swaps:     usize,
+    max_swaps: usize,
+}
+
+impl Bubble
+{
+    fn new(list: Vec<(graphics::Color, u32)>, max_swaps: usize) -> Bubble
     {
-        List(Arc::new(Mutex::new(list)))
+        Bubble {
+            list:      list,
+            cursor:    None,
+            swaps:     1,
+            max_swaps: max_swaps,
+        }
     }
 
-    fn clone(&self) -> List<T>
+    fn run(&mut self) -> Option<(usize, usize)>
     {
-        List(self.0.clone())
-    }
+        let cursor;
 
-    fn shuffle(&mut self)
-    {
-        let mut list = self.0.lock().unwrap();
-        thread_rng().shuffle(&mut (*list)[..]);
-    }
+        if let Some(num) = self.cursor {
+            cursor = num;
+        } else {
+            self.swaps = 0;
+            cursor     = 1;
+        }
 
-    fn lock<'a>(&'a self) -> Result<MutexGuard<'a, Vec<T>>, PoisonError<MutexGuard<'a, Vec<T>>>>
-    {
-        self.0.lock()
+        let len = self.list.len();
+        let max = cmp::min(cursor + self.max_swaps, len);
+
+        for i in cursor..max {
+            if self.list[i - 1].1 > self.list[i].1 {
+                self.list.swap(i - 1, i);
+                self.swaps += 1;
+            }
+        }
+
+        self.cursor = Some(max);
+
+        if max >= len {
+            self.cursor = None;
+
+            if self.swaps == 0 {
+                return None;
+            }
+        }
+
+        Some((cursor - 1, max))
     }
 }
 
@@ -38,48 +67,35 @@ struct Main
     width:  u32,
     height: u32,
 
-    list: List<(graphics::Color, u32)>,
-
-    running: bool,
-    test:    Box<Fn(List<(graphics::Color, u32)>) + Send + Sync + 'static>,
-}
-
-fn bubble_sort<T>(list: List<T>)
-{
-
-}
-
-fn test<T: Send + Sync + 'static>(list: List<T>)
-{
-    thread::spawn(move || { (bubble_sort)(list); });
+    updated: (usize, usize),
+    test:    Bubble,
 }
 
 impl Main
 {
     fn new(context: &mut Context) -> GameResult<Main>
     {
-        let mut rng = rand::thread_rng();
-        let mut v   = vec![];
+        let mut rng  = rand::thread_rng();
+        let mut list = vec![];
 
-        for i in 0..10000 {
+        graphics::clear(context);
+
+        for i in 0..100 {
             let r = rng.gen_range(0, 255);
             let g = rng.gen_range(0, 255);
             let b = rng.gen_range(0, 255);
 
-            v.push((graphics::Color::from((r, g, b)), i));
+            list.push((graphics::Color::from((r, g, b)), i));
         }
 
-        let mut list = List::new(v);
-        list.shuffle();
-
+        thread_rng().shuffle(&mut list[..]);
+        
         Ok(Main {
             width:  context.conf.window_width,
             height: context.conf.window_height,
 
-            list: list,
-
-            running: false,
-            test: Box::new(bubble_sort),
+            updated: (0, list.len()),
+            test:    Bubble::new(list, 100),
         })
     }
 }
@@ -88,9 +104,8 @@ impl event::EventHandler for Main
 {
     fn update(&mut self, context: &mut Context, dt: Duration) -> GameResult<()>
     {
-        if !self.running {
-            test(self.list.clone());
-            self.running = true;
+        if let Some(update) = self.test.run() {
+            self.updated = update;
         }
 
         Ok(())
@@ -98,18 +113,42 @@ impl event::EventHandler for Main
 
     fn draw(&mut self, context: &mut Context) -> GameResult<()>
     {
+        macro_rules! ro3 {
+            ($a: expr, $b: expr, $c: expr) => {
+                ($a as f32) * ($b as f32) / ($c as f32)
+            };
+        }
+
+        let list     = &mut self.test.list;
+        let len      = list.len();
+        let (st, ed) = self.updated;
+
+        let px_size = ro3!(1., self.width, len);
+
+        let gst = ro3!(st, self.width, len);
+        let ged = ro3!(ed, self.width, len);
+        
         graphics::clear(context);
-
-        let mut list = self.list.lock().unwrap();
-        let     max  = list.len();
-
-        for i in 0..max {
+        /*
+        graphics::rectangle(context, graphics::DrawMode::Fill, graphics::Rect::new(
+            0. + self.width as f32 / 2.,
+            0. + self.height as f32 / 2.,
+            ged - gst,
+            self.height as f32
+        ))?;
+        */
+        for i in st..ed {
             graphics::set_color(context, list[i].0);
             
-            let x = i         as u32 * self.width  / max as u32;
-            let y = list[i].1 as u32 * self.height / max as u32;
+            let x = ro3!(i,         self.width,  len) + px_size / 2.;
+            let y = ro3!(list[i].1, self.height, len) + px_size / 2.;
+            let y = self.height as f32 - y;
 
-            graphics::rectangle(context, graphics::DrawMode::Fill, graphics::Rect::new(x as f32, y as f32, 1., 1.))?;
+            println!("{} {} {} ", x, y, px_size);
+
+            graphics::rectangle(context, graphics::DrawMode::Fill,
+                graphics::Rect::new(x, y, px_size, px_size)
+            )?;
         }
 
         graphics::present(context);
