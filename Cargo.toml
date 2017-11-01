@@ -1,5 +1,5 @@
 [package]
-name = "sort_algorithms"
+name = "sort"
 version = "0.1.0"
 authors = ["Rafael Gomes Dantas <rafagd@gmail.com>"]
 build = "src/build.rs"
@@ -11,5 +11,5 @@ metadeps = "*"
 sdl2 = "*"
 
 [dependencies]
-ggez = "*"
+ggez = { git = "https://github.com/ggez/ggez.git" }
 rand = "*"
